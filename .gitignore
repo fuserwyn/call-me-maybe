@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Type checkers / linters
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Project output (generated at review)
+data/output/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+
+# uv / locks for local experiments (keep uv.lock committed when ready)
+# uv.lock is intentionally tracked for reproducible installs
+
+# Model / HF caches (if downloaded into the repo by mistake)
+*.bin
+*.safetensors
+.cache/
