@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from src.models import FunctionDefinition
+from src.models import FunctionDefinition, ParameterSpec
 
 _WS = frozenset(" \t\n\r")
 
@@ -189,8 +189,7 @@ class FunctionCallPrefixChecker:
             if i >= n:
                 return end_partial()
 
-            ptype = fn.parameters[pname].type
-            value_end = self._match_value_prefix(text, i, ptype)
+            value_end = self._match_value_prefix(text, i, fn.parameters[pname])
             if value_end is None:
                 return ParseResult(ok=False)
             if value_end == -1:
@@ -224,13 +223,18 @@ class FunctionCallPrefixChecker:
             return ParseResult(ok=False)
         return ParseResult(ok=True, complete=True, parsed=parsed)
 
-    def _match_value_prefix(self, text: str, start: int, ptype: str) -> int | None:
+    def _match_value_prefix(
+        self,
+        text: str,
+        start: int,
+        spec: ParameterSpec,
+    ) -> int | None:
         """Match a JSON value of the given type, allowing incomplete prefixes.
 
         Args:
             text: Full generated text.
             start: Index where the value starts.
-            ptype: Expected type name (number, string, boolean).
+            spec: Parameter schema (type, and optionally nested fields).
 
         Returns:
             Index after the value, -1 if text ends inside a valid partial value,
@@ -240,6 +244,7 @@ class FunctionCallPrefixChecker:
         if start >= n:
             return -1
 
+        ptype = spec.type
         if ptype == "number":
             return self._match_number(text, start)
         if ptype == "boolean":

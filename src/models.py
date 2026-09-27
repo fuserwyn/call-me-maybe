@@ -6,11 +6,20 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ParameterSpec(BaseModel):
-    """Schema for a single function parameter."""
+    """Schema for a single function parameter.
+
+    ``properties`` and ``items`` are optional and used by the bonus nested
+    decoder. Flat definitions from the mandatory tests omit them.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     type: str = Field(..., description="JSON type: number, string, boolean, etc.")
+    properties: dict[str, "ParameterSpec"] | None = None
+    items: "ParameterSpec | None" = None
+
+
+ParameterSpec.model_rebuild()
 
 
 class ReturnSpec(BaseModel):

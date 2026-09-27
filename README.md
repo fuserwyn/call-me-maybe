@@ -146,6 +146,36 @@ IO-only smoke test (no model load; not for evaluation):
 uv run python -m src --skip-model
 ```
 
+## Bonus
+
+Optional features live in `src/bonus` and stay off the mandatory path. Run them with:
+
+```bash
+make bonus
+```
+
+That target runs the bonus test suite, then:
+
+```bash
+uv run python -m src.bonus --visualize
+```
+
+Another model (still a causal LM the SDK can load):
+
+```bash
+uv run python -m src.bonus --model Qwen/Qwen3-0.6B --visualize
+```
+
+What the bonus module adds:
+
+- **Other models** — `--model` is passed to `Small_LLM_Model`.
+- **Recoded tokenizer** — `BonusTokenizer.encode` / `decode` use `vocab.json` and `merges.txt` from `get_path_to_vocab_file` and `get_path_to_merges_file`. The bonus decoder never calls the SDK `encode` or `decode`; it only calls `get_logits_from_input_ids`.
+- **Nested arguments** — object and array parameter schemas (`NestedCallChecker`).
+- **Recovery** — if a token leads to a dead end, generation tries the next legal alternative, then closes truncated braces.
+- **Cache and batching** — legality of `(prefix, token)` is cached; each step checks a top-logit batch before scanning the rest of the vocabulary.
+- **Visualization** — `--visualize` prints every accepted token. A full trace is written to `data/output/generation_trace.json`.
+- **Tests** — `tests/test_bonus_nested.py` and `tests/test_bonus_tokenizer.py`.
+
 ## Resources
 
 - [Hugging Face — Qwen3-0.6B](https://huggingface.co/Qwen/Qwen3-0.6B)
