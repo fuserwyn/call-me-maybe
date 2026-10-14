@@ -16,6 +16,8 @@ ENV/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
+.coverage
+.coverage.*
 
 # Project output (generated at review)
 data/output/
