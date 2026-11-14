@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 
 from src.io_handlers import load_function_definitions
 from src.models import FunctionDefinition
@@ -154,7 +155,7 @@ class ScriptedModel:
         self.calls: dict[str, int] = {}
         self._prompts: list[tuple[bytes, bytes]] = []
 
-    def encode(self, text: str) -> np.ndarray:
+    def encode(self, text: str) -> NDArray[np.int64]:
         """Encode text one byte per token (2-D, like the SDK tensor)."""
         self._count("encode")
         ids = [self.vocab[BYTE_TO_CHAR[byte]] for byte in text.encode("utf-8")]

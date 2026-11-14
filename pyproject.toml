@@ -7,6 +7,9 @@ dependencies = [
     "llm-sdk",
     "numpy>=1.26.0",
     "pydantic>=2.0.0",
+    # Not imported by src/: transformers needs it when llm_sdk loads the
+    # model with device_map="auto", which it does on CUDA machines.
+    "accelerate>=1.0.0",
 ]
 
 # Installed by a plain `uv sync` (the reviewer's command), so `make lint` works.

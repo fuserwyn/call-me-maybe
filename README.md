@@ -49,8 +49,20 @@ Lighter alternative, a separate `.venv-cpu` with CPU-only torch (no CUDA
 libraries):
 
 ```bash
-make runner
+make runner        # install .venv-cpu and run
+make test-runner   # fast tests (no model) inside .venv-cpu
 ```
+
+Remove both venvs, `data/output`, tool caches and everything `goinfre.sh`
+put in goinfre (the model included). Caches in the home directory are kept:
+
+```bash
+make fclean
+```
+
+`accelerate` is listed as a dependency although `src/` never imports it:
+on CUDA machines `llm_sdk` loads the model with `device_map="auto"`, which
+`transformers` refuses to do without it.
 
 Custom paths:
 

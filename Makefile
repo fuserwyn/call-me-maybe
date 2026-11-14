@@ -1,4 +1,4 @@
-.PHONY: install run runner debug clean lint lint-strict test test-fast
+.PHONY: install run cpu-venv runner test-runner debug clean fclean lint lint-strict test test-fast
 
 install:
 	sh goinfre.sh uv sync
@@ -10,12 +10,19 @@ run:
 CPU_VENV = .venv-cpu
 TORCH_CPU_INDEX = https://download.pytorch.org/whl/cpu
 
-runner:
+cpu-venv:
 	sh goinfre.sh uv venv --allow-existing $(CPU_VENV)
 	sh goinfre.sh uv pip install --python $(CPU_VENV) \
 		--index-url $(TORCH_CPU_INDEX) "torch>=2.0.0"
 	sh goinfre.sh uv pip install --python $(CPU_VENV) ./llm_sdk numpy pydantic
+
+runner: cpu-venv
 	sh goinfre.sh $(CPU_VENV)/bin/python -m src
+
+# Fast tests (no real model) inside the CPU-only venv.
+test-runner: cpu-venv
+	sh goinfre.sh uv pip install --python $(CPU_VENV) pytest flake8 mypy
+	SKIP_SLOW=1 sh goinfre.sh $(CPU_VENV)/bin/python -m pytest tests -q
 
 debug:
 	sh goinfre.sh uv run python -m pdb -m src
@@ -25,6 +32,10 @@ clean:
 	find . -type d -name ".mypy_cache" -exec rm -rf {} + 2>/dev/null || true
 	rm -rf data/output/*.json 2>/dev/null || true
 	rm -f .coverage .coverage.* 2>/dev/null || true
+
+# Everything clean removes, plus both venvs, data/output and goinfre caches.
+fclean: clean
+	sh clean.sh
 
 lint:
 	sh goinfre.sh uv run flake8 .
