@@ -1,13 +1,24 @@
-.PHONY: install run debug clean lint lint-strict test test-fast
+.PHONY: install run runner debug clean lint lint-strict test test-fast
 
 install:
-	uv sync
+	sh goinfre.sh uv sync
 
 run:
-	uv run python -m src
+	sh goinfre.sh uv run python -m src
+
+# Lighter install: separate venv with CPU-only torch (no CUDA libraries).
+CPU_VENV = .venv-cpu
+TORCH_CPU_INDEX = https://download.pytorch.org/whl/cpu
+
+runner:
+	sh goinfre.sh uv venv --allow-existing $(CPU_VENV)
+	sh goinfre.sh uv pip install --python $(CPU_VENV) \
+		--index-url $(TORCH_CPU_INDEX) "torch>=2.0.0"
+	sh goinfre.sh uv pip install --python $(CPU_VENV) ./llm_sdk numpy pydantic
+	sh goinfre.sh $(CPU_VENV)/bin/python -m src
 
 debug:
-	uv run python -m pdb -m src
+	sh goinfre.sh uv run python -m pdb -m src
 
 clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
@@ -16,18 +27,18 @@ clean:
 	rm -f .coverage .coverage.* 2>/dev/null || true
 
 lint:
-	uv run flake8 .
-	uv run mypy . --warn-return-any --warn-unused-ignores \
+	sh goinfre.sh uv run flake8 .
+	sh goinfre.sh uv run mypy . --warn-return-any --warn-unused-ignores \
 		--ignore-missing-imports --disallow-untyped-defs --check-untyped-defs
 
 lint-strict:
-	uv run flake8 .
-	uv run mypy . --strict
+	sh goinfre.sh uv run flake8 .
+	sh goinfre.sh uv run mypy . --strict
 
 test:
-	uv run --with pytest --with pytest-cov python -m pytest tests -v \
+	sh goinfre.sh uv run --with pytest --with pytest-cov python -m pytest tests -v \
 		--cov=src --cov-report=term-missing
 
 test-fast:
-	SKIP_SLOW=1 uv run --with pytest --with pytest-cov python -m pytest tests \
+	SKIP_SLOW=1 sh goinfre.sh uv run --with pytest --with pytest-cov python -m pytest tests \
 		--cov=src --cov-report=term-missing

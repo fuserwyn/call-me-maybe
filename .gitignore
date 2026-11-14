@@ -9,6 +9,7 @@ build/
 
 # Virtual environments
 .venv/
+.venv-cpu/
 venv/
 ENV/
 

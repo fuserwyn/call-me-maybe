@@ -40,6 +40,18 @@ make run
 # equivalent: uv run python -m src
 ```
 
+On 42 machines the home quota is too small for the model (~1.4 GB) and torch.
+Every `make` target goes through `goinfre.sh`: when `/goinfre/$USER` exists,
+the uv cache, the virtual environment and the Hugging Face cache are placed
+there (override with `GOINFRE=/path`). Elsewhere nothing changes.
+
+Lighter alternative, a separate `.venv-cpu` with CPU-only torch (no CUDA
+libraries):
+
+```bash
+make runner
+```
+
 Custom paths:
 
 ```bash
