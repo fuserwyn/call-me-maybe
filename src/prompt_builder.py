@@ -9,27 +9,7 @@ from __future__ import annotations
 
 import json
 
-from src.models import FunctionDefinition, ParameterSpec
-
-
-def describe_type(spec: ParameterSpec) -> str:
-    """Render a parameter type, including nested object/array shapes.
-
-    Args:
-        spec: Parameter schema.
-
-    Returns:
-        Short human-readable type, e.g. ``array of string``.
-    """
-    if spec.type == "array" and spec.items is not None:
-        return f"array of {describe_type(spec.items)}"
-    if spec.type == "object" and spec.properties:
-        inner = ", ".join(
-            f"{name}: {describe_type(child)}"
-            for name, child in spec.properties.items()
-        )
-        return f"object {{{inner}}}"
-    return spec.type
+from src.models import FunctionDefinition
 
 
 def call_template(fn: FunctionDefinition) -> str:
@@ -42,7 +22,7 @@ def call_template(fn: FunctionDefinition) -> str:
         JSON with ``<type>`` placeholders for every argument.
     """
     params = ",".join(
-        f"{json.dumps(name, ensure_ascii=False)}:<{describe_type(spec)}>"
+        f"{json.dumps(name, ensure_ascii=False)}:<{spec.type}>"
         for name, spec in fn.parameters.items()
     )
     name = json.dumps(fn.name, ensure_ascii=False)
@@ -63,7 +43,7 @@ def format_functions(functions: list[FunctionDefinition]) -> str:
         lines.append(f"- {fn.name}: {fn.description}")
         for name, spec in fn.parameters.items():
             hint = f" - {spec.description}" if spec.description else ""
-            lines.append(f"    {name} ({describe_type(spec)}){hint}")
+            lines.append(f"    {name} ({spec.type}){hint}")
         lines.append(f"    call: {call_template(fn)}")
     return "\n".join(lines)
 

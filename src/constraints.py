@@ -386,7 +386,7 @@ class FunctionCallPrefixChecker(BaseModel):
         Args:
             text: Full generated text.
             start: Index where the value starts.
-            spec: Parameter schema (type, and optionally nested fields).
+            spec: Parameter schema.
 
         Returns:
             Index after the value, -1 if text ends inside a valid partial value,

@@ -8,21 +8,14 @@ from pydantic import BaseModel, ConfigDict, Field
 class ParameterSpec(BaseModel):
     """Schema for a single function parameter.
 
-    ``properties`` and ``items`` are optional and used by the bonus nested
-    decoder. Flat definitions from the mandatory tests omit them. Unknown
-    JSON-schema keywords (``minimum``, ``enum`` ...) are ignored so that
-    other function sets still load.
+    Unknown JSON-schema keywords (``minimum``, ``enum`` ...) are ignored so
+    that other function sets still load.
     """
 
     model_config = ConfigDict(extra="ignore")
 
     type: str = Field(..., description="JSON type: number, string, boolean, etc.")
     description: str | None = None
-    properties: dict[str, "ParameterSpec"] | None = None
-    items: "ParameterSpec | None" = None
-
-
-ParameterSpec.model_rebuild()
 
 
 class ReturnSpec(BaseModel):

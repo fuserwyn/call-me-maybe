@@ -1,4 +1,4 @@
-.PHONY: install run debug clean lint lint-strict bonus test test-fast
+.PHONY: install run debug clean lint lint-strict test test-fast
 
 install:
 	uv sync
@@ -24,14 +24,10 @@ lint-strict:
 	uv run flake8 .
 	uv run mypy . --strict
 
-bonus:
-	uv run python -m unittest discover -s tests -p 'test_*.py' -v
-	uv run python -m src.bonus --visualize
-
 test:
 	uv run --with pytest --with pytest-cov python -m pytest tests -v \
 		--cov=src --cov-report=term-missing
 
 test-fast:
 	SKIP_SLOW=1 uv run --with pytest --with pytest-cov python -m pytest tests \
-		--deselect tests/test_bonus_tokenizer.py --cov=src --cov-report=term-missing
+		--cov=src --cov-report=term-missing
