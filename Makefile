@@ -1,7 +1,7 @@
 .PHONY: install run debug clean lint lint-strict bonus test test-fast
 
 install:
-	uv sync --extra dev
+	uv sync
 
 run:
 	uv run python -m src

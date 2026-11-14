@@ -1,8 +1,52 @@
-"""Build the natural-language prompt sent to the LLM."""
+"""Build the natural-language prompt sent to the LLM.
+
+Everything function-specific in the prompt is generated from the loaded
+definitions, so the prompt never mentions functions that are not in
+``functions_definition.json``.
+"""
 
 from __future__ import annotations
 
-from src.models import FunctionDefinition
+import json
+
+from src.models import FunctionDefinition, ParameterSpec
+
+
+def describe_type(spec: ParameterSpec) -> str:
+    """Render a parameter type, including nested object/array shapes.
+
+    Args:
+        spec: Parameter schema.
+
+    Returns:
+        Short human-readable type, e.g. ``array of string``.
+    """
+    if spec.type == "array" and spec.items is not None:
+        return f"array of {describe_type(spec.items)}"
+    if spec.type == "object" and spec.properties:
+        inner = ", ".join(
+            f"{name}: {describe_type(child)}"
+            for name, child in spec.properties.items()
+        )
+        return f"object {{{inner}}}"
+    return spec.type
+
+
+def call_template(fn: FunctionDefinition) -> str:
+    """Show the exact JSON shape a call to ``fn`` must have.
+
+    Args:
+        fn: Function definition.
+
+    Returns:
+        JSON with ``<type>`` placeholders for every argument.
+    """
+    params = ",".join(
+        f"{json.dumps(name, ensure_ascii=False)}:<{describe_type(spec)}>"
+        for name, spec in fn.parameters.items()
+    )
+    name = json.dumps(fn.name, ensure_ascii=False)
+    return f'{{"name":{name},"parameters":{{{params}}}}}'
 
 
 def format_functions(functions: list[FunctionDefinition]) -> str:
@@ -12,14 +56,15 @@ def format_functions(functions: list[FunctionDefinition]) -> str:
         functions: Available tools.
 
     Returns:
-        Multi-line description of each function.
+        Multi-line description of each function with its call shape.
     """
     lines: list[str] = []
     for fn in functions:
-        params = ", ".join(
-            f"{name}: {spec.type}" for name, spec in fn.parameters.items()
-        )
-        lines.append(f"- {fn.name}({params}): {fn.description}")
+        lines.append(f"- {fn.name}: {fn.description}")
+        for name, spec in fn.parameters.items():
+            hint = f" - {spec.description}" if spec.description else ""
+            lines.append(f"    {name} ({describe_type(spec)}){hint}")
+        lines.append(f"    call: {call_template(fn)}")
     return "\n".join(lines)
 
 
@@ -33,33 +78,21 @@ def build_prompt(user_prompt: str, functions: list[FunctionDefinition]) -> str:
     Returns:
         Prompt string to encode and feed to the model.
     """
-    catalog = format_functions(functions)
     return (
-        "You are a function-calling system. "
-        "Convert the user request into exactly one JSON function call.\n"
+        "You are a function-calling system. Choose the ONE function that "
+        "fulfils the user request and fill in its arguments.\n"
         "Rules:\n"
-        "- Output ONLY a single JSON object, no markdown, no explanation.\n"
-        '- Format: {"name":"<function>","parameters":{...}}\n'
-        "- Use double quotes. Match parameter names and types exactly.\n"
-        "- Numbers must be JSON numbers. Strings must be JSON strings.\n"
-        "- For regex substitution: source_string is the text, regex is the "
-        "pattern to find, replacement is what to put instead.\n"
-        "- Prefer general patterns (e.g. [0-9]+ for digits, "
-        "[aeiouAEIOU] for vowels) when the user describes a class of matches.\n"
-        "- When replacing a whole word, use that word as the regex "
-        "(e.g. cat), not a character class like [cat].\n"
-        "Examples:\n"
-        '- User: What is the sum of 2 and 3?\n'
-        '  {"name":"fn_add_numbers","parameters":{"a":2.0,"b":3.0}}\n'
-        '- User: Replace all numbers in "ab 12 cd" with NUM\n'
-        '  {"name":"fn_substitute_string_with_regex",'
-        '"parameters":{"source_string":"ab 12 cd","regex":"[0-9]+",'
-        '"replacement":"NUM"}}\n'
-        '- User: Substitute the word cat with dog in "a cat"\n'
-        '  {"name":"fn_substitute_string_with_regex",'
-        '"parameters":{"source_string":"a cat","regex":"cat",'
-        '"replacement":"dog"}}\n'
-        f"Available functions:\n{catalog}\n\n"
-        f"User request: {user_prompt}\n\n"
+        "- Output only the JSON call, nothing else.\n"
+        "- Take argument values from the request. Copy quoted text exactly, "
+        "without the surrounding quotes.\n"
+        "- Numbers are plain JSON numbers, not strings.\n"
+        "- When an argument is a regular expression, write a pattern that "
+        "matches what the user describes, not the words of the description. "
+        "For a kind of character, use a character class that lists every "
+        "member of that kind (e.g. [a-zA-Z] for letters). Use + to match a "
+        "run of characters.\n"
+        "- When the user names a symbol in words, use the symbol itself.\n\n"
+        f"Available functions:\n{format_functions(functions)}\n\n"
+        f"User request: {user_prompt}\n"
         "JSON:"
     )

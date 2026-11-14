@@ -2,40 +2,58 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from typing import Any
 
 import numpy as np
-from llm_sdk import Small_LLM_Model  # type: ignore[attr-defined]
+from pydantic import BaseModel, ConfigDict, PrivateAttr
 
-from src.constraints import FunctionCallPrefixChecker
+from src.constraints import FunctionCallPrefixChecker, ParseResult
 from src.models import FunctionCallResult, FunctionDefinition
 from src.prompt_builder import build_prompt
-from src.vocab_utils import build_id_to_text, load_vocab
+from src.vocab_utils import PLACEHOLDER, build_id_to_bytes, decode_prefix, load_vocab
 
-_MAX_NEW_TOKENS = 192
+_MAX_NEW_TOKENS = 256
 
 
-class ConstrainedDecoder:
-    """Generate function calls using constrained decoding over model logits."""
+class ConstrainedDecoder(BaseModel):
+    """Generate function calls using constrained decoding over model logits.
+
+    Generated text is kept as raw bytes, because one byte-level BPE token can
+    hold half of a multi-byte character (``é``, Cyrillic, emoji).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    llm: Any
+    functions: list[FunctionDefinition]
+    _checker: FunctionCallPrefixChecker = PrivateAttr()
+    _id_to_bytes: dict[int, bytes] = PrivateAttr(default_factory=dict)
 
     def __init__(
         self,
-        model: Small_LLM_Model,
+        model: Any,
         functions: list[FunctionDefinition],
+        **data: Any,
     ) -> None:
         """Initialize the decoder.
 
         Args:
-            model: Wrapped LLM from llm_sdk (public API only).
+            model: ``llm_sdk.Small_LLM_Model`` (public API only).
             functions: Available function definitions for schema constraints.
+            **data: Extra pydantic fields (none for now).
         """
-        self._model = model
-        self._functions = functions
-        self._checker = FunctionCallPrefixChecker(functions)
-        vocab = load_vocab(model.get_path_to_vocab_file())
-        self._id_to_text = build_id_to_text(vocab)
+        super().__init__(llm=model, functions=functions, **data)
+
+    def model_post_init(self, context: Any, /) -> None:
+        """Build the checker and the id → bytes table.
+
+        Args:
+            context: Pydantic validation context (unused).
+        """
+        self._checker = FunctionCallPrefixChecker(self.functions)
+        vocab = load_vocab(self.llm.get_path_to_vocab_file())
+        self._id_to_bytes = build_id_to_bytes(vocab)
 
     def generate(self, prompt: str) -> FunctionCallResult:
         """Map a natural-language prompt to a structured function call.
@@ -46,66 +64,80 @@ class ConstrainedDecoder:
         Returns:
             Structured function call with name and typed parameters.
         """
-        full_prompt = build_prompt(prompt, self._functions)
-        prompt_ids = self._model.encode(full_prompt).tolist()[0]
-        generated = ""
+        full_prompt = build_prompt(prompt, self.functions)
+        prompt_ids = [int(i) for i in self.llm.encode(full_prompt).tolist()[0]]
+        generated = b""
         generated_ids: list[int] = []
 
         for _ in range(_MAX_NEW_TOKENS):
-            input_ids = prompt_ids + generated_ids
-            logits = self._model.get_logits_from_input_ids(input_ids)
-            next_id = self._select_token(logits, generated)
-            if next_id is None:
+            logits = self.llm.get_logits_from_input_ids(prompt_ids + generated_ids)
+            picked = self._select_token(logits, generated)
+            if picked is None:
                 print(
-                    f"Warning: no valid tokens for prompt {prompt!r} "
-                    f"at {generated!r}",
+                    f"Warning: no valid token for {prompt!r} at {generated!r}",
                     file=sys.stderr,
                 )
                 break
-
-            piece = self._id_to_text.get(next_id, "")
+            next_id, result = picked
             generated_ids.append(next_id)
-            generated += piece
-
-            result = self._checker.check(generated)
+            generated += self._id_to_bytes[next_id]
             if result.complete and result.parsed is not None:
                 return self._to_result(prompt, result.parsed)
 
-        # Fallback: try to parse whatever we have
-        try:
-            parsed = json.loads(generated)
-            return self._to_result(prompt, parsed)
-        except (json.JSONDecodeError, TypeError, KeyError, ValueError):
-            print(
-                f"Error: failed to produce valid JSON for {prompt!r}. "
-                f"Got: {generated!r}",
-                file=sys.stderr,
-            )
-            return FunctionCallResult(prompt=prompt, name="", parameters={})
+        print(
+            f"Error: no complete call for {prompt!r} within {_MAX_NEW_TOKENS} "
+            f"tokens. Got: {generated.decode('utf-8', errors='replace')!r}",
+            file=sys.stderr,
+        )
+        return FunctionCallResult(prompt=prompt, name="", parameters={})
 
-    def _select_token(self, logits: list[float], generated: str) -> int | None:
-        """Mask invalid tokens and return the argmax among allowed ones.
+    def check_bytes(self, data: bytes) -> ParseResult:
+        """Run the prefix checker on generated bytes.
 
-        Walks candidate ids in descending logit order so the first valid
-        token is already the constrained argmax (fast when the model
-        already prefers a legal continuation).
+        A trailing incomplete UTF-8 character is checked as a placeholder
+        non-ASCII character: legal inside a string, illegal elsewhere.
+
+        Args:
+            data: Bytes generated so far plus one candidate token.
+
+        Returns:
+            Checker verdict for those bytes.
+        """
+        decoded = decode_prefix(data)
+        if decoded is None:
+            return ParseResult(ok=False)
+        text, pending = decoded
+        if pending:
+            return ParseResult(ok=self._checker.check(text + PLACEHOLDER).ok)
+        return self._checker.check(text)
+
+    def _select_token(
+        self,
+        logits: list[float],
+        generated: bytes,
+    ) -> tuple[int, ParseResult] | None:
+        """Return the argmax among tokens that keep the output valid.
+
+        Walks candidate ids in descending logit order, so the first valid
+        token is the constrained argmax. This gives the same answer as
+        setting every invalid logit to -inf, without checking all ~150k
+        tokens when the model already prefers a legal continuation.
 
         Args:
             logits: Raw next-token scores from the model.
-            generated: JSON text generated so far.
+            generated: Bytes generated so far.
 
         Returns:
-            Selected token id, or None if nothing is allowed.
+            ``(token_id, verdict)`` or None if nothing is allowed.
         """
         scores = np.asarray(logits, dtype=np.float64)
-        # Highest scores first — first legal hit == constrained argmax.
-        for token_id in np.argsort(-scores):
-            tid = int(token_id)
-            text = self._id_to_text.get(tid)
-            if text is None:
+        for token_id in np.argsort(-scores, kind="stable"):
+            piece = self._id_to_bytes.get(int(token_id))
+            if not piece:
                 continue
-            if self._checker.check(generated + text).ok:
-                return tid
+            result = self.check_bytes(generated + piece)
+            if result.ok:
+                return int(token_id), result
         return None
 
     @staticmethod
@@ -117,7 +149,7 @@ class ConstrainedDecoder:
             parsed: Parsed JSON dictionary.
 
         Returns:
-            Validated FunctionCallResult (best-effort on types).
+            Validated FunctionCallResult.
         """
         name = str(parsed.get("name", ""))
         parameters = parsed.get("parameters", {})

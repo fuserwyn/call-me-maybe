@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from src.pipeline import run_pipeline
@@ -46,12 +47,16 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     """Parse CLI args and run the function-calling pipeline."""
     args = build_parser().parse_args()
-    run_pipeline(
-        args.functions_definition,
-        args.input,
-        args.output,
-        load_model=not args.skip_model,
-    )
+    try:
+        run_pipeline(
+            args.functions_definition,
+            args.input,
+            args.output,
+            load_model=not args.skip_model,
+        )
+    except KeyboardInterrupt:
+        print("Interrupted.", file=sys.stderr)
+        raise SystemExit(130)
 
 
 if __name__ == "__main__":

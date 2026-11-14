@@ -7,22 +7,34 @@ Token ids come from the public vocab file; merges come from
 
 from __future__ import annotations
 
+import json
+import re
 import unicodedata
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
-import regex as re
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
+
+from src.vocab_utils import bytes_to_unicode
+
+_LETTER = r"[^\W\d_]"
+"""Unicode letter (``\\p{L}``) in the standard ``re`` module."""
 
 _SPLIT = re.compile(
     r"(?i:'s|'t|'re|'ve|'m|'ll|'d)"
-    r"|[^\r\n\p{L}\p{N}]?\p{L}+"
-    r"|\p{N}"
-    r"| ?[^\s\p{L}\p{N}]+[\r\n]*"
+    rf"|(?:[^\w\r\n]|_)?{_LETTER}+"
+    r"|\d"
+    r"| ?(?:[^\s\w]|_)+[\r\n]*"
     r"|\s*[\r\n]+"
     r"|\s+(?!\S)"
     r"|\s+"
 )
+"""Qwen2 pre-tokenizer split, written for ``re`` instead of ``regex``.
+
+``\\p{L}`` becomes ``[^\\W\\d_]`` and ``\\p{N}`` becomes ``\\d``. The two
+only differ on rare numeric symbols such as ``²`` (counted as letters here).
+"""
 
 
 class TokenizerFiles(BaseModel):
@@ -35,45 +47,48 @@ class TokenizerFiles(BaseModel):
     model_name: str = Field(default="Qwen/Qwen3-0.6B")
 
 
-def bytes_to_unicode() -> dict[int, str]:
-    """Map each byte to a unicode character, GPT-2 / Qwen byte-level style.
-
-    Returns:
-        Mapping from byte value 0..255 to a single character.
-    """
-    ordered = (
-        list(range(ord("!"), ord("~") + 1))
-        + list(range(ord("¡"), ord("¬") + 1))
-        + list(range(ord("®"), ord("ÿ") + 1))
-    )
-    chars = ordered[:]
-    extra = 0
-    for byte in range(256):
-        if byte not in ordered:
-            ordered.append(byte)
-            chars.append(256 + extra)
-            extra += 1
-    return {byte: chr(code) for byte, code in zip(ordered, chars)}
-
-
-class BonusTokenizer:
+class BonusTokenizer(BaseModel):
     """Public encode/decode compatible with Qwen byte-level BPE."""
 
-    def __init__(self, vocab: dict[str, int], merges: list[tuple[str, str]]) -> None:
-        """Build lookup tables.
+    model_config = ConfigDict(extra="forbid")
+
+    vocab: dict[str, int]
+    merges: list[tuple[str, str]]
+    _id_to_token: dict[int, str] = PrivateAttr(default_factory=dict)
+    _ranks: dict[tuple[str, str], int] = PrivateAttr(default_factory=dict)
+    _byte_encoder: dict[int, str] = PrivateAttr(default_factory=dict)
+    _byte_decoder: dict[str, int] = PrivateAttr(default_factory=dict)
+    _bpe_cache: dict[str, tuple[str, ...]] = PrivateAttr(default_factory=dict)
+
+    def __init__(
+        self,
+        vocab: dict[str, int],
+        merges: list[tuple[str, str]],
+        **data: Any,
+    ) -> None:
+        """Store vocab and merges.
 
         Args:
             vocab: Token string to id, as stored in vocab.json.
             merges: Merge pairs in priority order (earlier = higher priority).
+            **data: Extra pydantic fields (none for now).
         """
-        self._vocab = vocab
-        self._id_to_token = {token_id: token for token, token_id in vocab.items()}
-        self._ranks = {pair: rank for rank, pair in enumerate(merges)}
+        super().__init__(vocab=vocab, merges=merges, **data)
+
+    def model_post_init(self, context: Any, /) -> None:
+        """Build lookup tables.
+
+        Args:
+            context: Pydantic validation context (unused).
+        """
+        self._id_to_token = {
+            token_id: token for token, token_id in self.vocab.items()
+        }
+        self._ranks = {pair: rank for rank, pair in enumerate(self.merges)}
         self._byte_encoder = bytes_to_unicode()
         self._byte_decoder = {
             char: byte for byte, char in self._byte_encoder.items()
         }
-        self._bpe_cache: dict[str, tuple[str, ...]] = {}
 
     @classmethod
     def from_files(cls, files: TokenizerFiles) -> "BonusTokenizer":
@@ -105,10 +120,10 @@ class BonusTokenizer:
                 self._byte_encoder[byte] for byte in piece.encode("utf-8")
             )
             for token in self._bpe(as_bytes):
-                token_id = self._vocab.get(token)
+                token_id = self.vocab.get(token)
                 if token_id is None:
                     for char in token:
-                        ids.append(self._vocab[char])
+                        ids.append(self.vocab[char])
                 else:
                     ids.append(token_id)
         return ids
@@ -210,8 +225,6 @@ def _merge(word: tuple[str, ...], pair: tuple[str, str]) -> tuple[str, ...]:
 
 def _load_vocab(path: str) -> dict[str, int]:
     """Read vocab.json."""
-    import json
-
     with Path(path).open("r", encoding="utf-8") as handle:
         data = json.load(handle)
     if not isinstance(data, dict):

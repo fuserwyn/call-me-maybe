@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from llm_sdk import Small_LLM_Model  # type: ignore[attr-defined]
@@ -47,18 +48,25 @@ def run_bonus(config: BonusConfig) -> list[FunctionCallResult]:
     functions = load_function_definitions(config.functions_path)
     prompts = load_prompts(config.input_path)
     if not functions:
-        print("Error: no function definitions available.")
+        print("Error: no function definitions available.", file=sys.stderr)
         raise SystemExit(1)
 
     print(f"Loading LLM ({config.model_name})...")
-    model = Small_LLM_Model(model_name=config.model_name)
-    tokenizer = BonusTokenizer.from_files(
-        TokenizerFiles(
-            vocab_path=model.get_path_to_vocab_file(),
-            merges_path=model.get_path_to_merges_file(),
-            model_name=config.model_name,
+    try:
+        model = Small_LLM_Model(model_name=config.model_name)
+        tokenizer = BonusTokenizer.from_files(
+            TokenizerFiles(
+                vocab_path=model.get_path_to_vocab_file(),
+                merges_path=model.get_path_to_merges_file(),
+                model_name=config.model_name,
+            )
         )
-    )
+    except Exception as exc:  # the SDK can fail in many library-specific ways
+        print(
+            f"Error: cannot load model {config.model_name!r}: {exc}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from exc
     decoder = BonusDecoder(
         model,
         tokenizer,

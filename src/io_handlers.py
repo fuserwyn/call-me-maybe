@@ -33,6 +33,9 @@ def load_json_file(path: Path) -> Any:
     except json.JSONDecodeError as exc:
         print(f"Error: invalid JSON in {path}: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
+    except UnicodeDecodeError as exc:
+        print(f"Error: {path} is not UTF-8 text: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
     except OSError as exc:
         print(f"Error: cannot read {path}: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc

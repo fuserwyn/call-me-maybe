@@ -2,14 +2,25 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from src.constraints import FunctionCallPrefixChecker, ParseResult
-from src.models import ParameterSpec
+from src.models import FunctionDefinition, ParameterSpec
 
 _WS = frozenset(" \t\n\r")
 
 
 class NestedCallChecker(FunctionCallPrefixChecker):
     """Same call grammar as the mandatory checker, plus object/array values."""
+
+    def __init__(self, functions: list[FunctionDefinition], **data: Any) -> None:
+        """Initialize with function schemas that may contain nested types.
+
+        Args:
+            functions: Function definitions.
+            **data: Extra pydantic fields (none for now).
+        """
+        super().__init__(functions, **data)
 
     def _match_value_prefix(
         self,

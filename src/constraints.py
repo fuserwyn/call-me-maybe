@@ -1,25 +1,269 @@
-"""Prefix checker: is generated text a valid prefix of a schema-valid call?"""
+"""Prefix checker: is generated text a valid prefix of a schema-valid call?
+
+The checker is *prefix-closed*: it only says "ok" for text that can still be
+completed into a call ``json.loads`` accepts. Otherwise generation could walk
+into a dead end (``01``, ``"\\q``, a raw tab in a string) and only discover it
+at the closing brace.
+
+Every ``_match_*`` helper returns the index right after the value, ``-1``
+when the text ends inside a value that is still valid so far, or ``None``
+when the text can no longer be valid.
+"""
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, PrivateAttr
 
 from src.models import FunctionDefinition, ParameterSpec
 
 _WS = frozenset(" \t\n\r")
+_SIMPLE_ESCAPES = frozenset('"\\/bfnrt')
+_HEX = frozenset("0123456789abcdefABCDEF")
+_PARTIAL = -1
 
 
-@dataclass
-class ParseResult:
+class ParseResult(BaseModel):
     """Result of checking a partial JSON function-call string."""
+
+    model_config = ConfigDict(extra="forbid")
 
     ok: bool
     complete: bool = False
-    parsed: dict | None = None
+    parsed: dict[str, Any] | None = None
 
 
-class FunctionCallPrefixChecker:
+def skip_ws(text: str, pos: int) -> int:
+    """Advance past JSON whitespace.
+
+    Args:
+        text: Generated text.
+        pos: Start index.
+
+    Returns:
+        Index of the first non-whitespace character (or ``len(text)``).
+    """
+    while pos < len(text) and text[pos] in _WS:
+        pos += 1
+    return pos
+
+
+def need(text: str, pos: int, literal: str) -> int | None:
+    """Match ``literal`` (after optional whitespace) at ``pos``.
+
+    Args:
+        text: Generated text.
+        pos: Start index.
+        literal: Exact text that must come next.
+
+    Returns:
+        Index after the literal, ``-1`` if the text ends inside it, or None.
+    """
+    pos = skip_ws(text, pos)
+    remaining = text[pos:]
+    if remaining.startswith(literal):
+        return pos + len(literal)
+    if literal.startswith(remaining):
+        return _PARTIAL
+    return None
+
+
+def match_digits(text: str, pos: int) -> int:
+    """Return the index after a run of ASCII digits starting at ``pos``."""
+    while pos < len(text) and "0" <= text[pos] <= "9":
+        pos += 1
+    return pos
+
+
+def match_number(text: str, start: int, *, integer: bool = False) -> int | None:
+    """Match a JSON number: ``-? (0 | [1-9][0-9]*) (.[0-9]+)? ([eE][+-]?[0-9]+)?``.
+
+    Args:
+        text: Generated text.
+        start: Index of the first character of the number.
+        integer: Forbid the fraction and exponent parts.
+
+    Returns:
+        Index after the number, ``-1`` for a valid partial, or None.
+    """
+    n = len(text)
+    i = start
+    if i < n and text[i] == "-":
+        i += 1
+    if i >= n:
+        return _PARTIAL
+    if text[i] == "0":
+        i += 1
+    elif "1" <= text[i] <= "9":
+        i = match_digits(text, i + 1)
+    else:
+        return None
+    if integer:
+        return i
+    if i < n and text[i] == ".":
+        i += 1
+        if i >= n:
+            return _PARTIAL
+        end = match_digits(text, i)
+        if end == i:
+            return None
+        i = end
+    if i < n and text[i] in "eE":
+        i += 1
+        if i < n and text[i] in "+-":
+            i += 1
+        if i >= n:
+            return _PARTIAL
+        end = match_digits(text, i)
+        if end == i:
+            return None
+        i = end
+    return i
+
+
+def match_literal(text: str, start: int, choices: tuple[str, ...]) -> int | None:
+    """Match one of several keywords (``true``, ``false``, ``null``).
+
+    Args:
+        text: Generated text.
+        start: Index of the keyword.
+        choices: Allowed keywords.
+
+    Returns:
+        Index after the keyword, ``-1`` for a valid partial, or None.
+    """
+    rest = text[start:]
+    for word in choices:
+        if rest.startswith(word):
+            return start + len(word)
+    if any(word.startswith(rest) for word in choices):
+        return _PARTIAL
+    return None
+
+
+def match_string(text: str, start: int) -> int | None:
+    """Match a JSON string with valid escapes and no raw control characters.
+
+    Args:
+        text: Generated text.
+        start: Index of the opening quote.
+
+    Returns:
+        Index after the closing quote, ``-1`` if still open, or None.
+    """
+    n = len(text)
+    if start >= n:
+        return _PARTIAL
+    if text[start] != '"':
+        return None
+    i = start + 1
+    while i < n:
+        ch = text[i]
+        if ch == '"':
+            return i + 1
+        if ord(ch) < 0x20:
+            return None
+        if ch != "\\":
+            i += 1
+            continue
+        if i + 1 >= n:
+            return _PARTIAL
+        esc = text[i + 1]
+        if esc in _SIMPLE_ESCAPES:
+            i += 2
+        elif esc == "u":
+            digits = text[i + 2:i + 6]
+            if any(char not in _HEX for char in digits):
+                return None
+            if len(digits) < 4:
+                return _PARTIAL
+            i += 6
+        else:
+            return None
+    return _PARTIAL
+
+
+def match_any_value(text: str, start: int) -> int | None:
+    """Match any JSON value (used for types without a precise schema).
+
+    Args:
+        text: Generated text.
+        start: Index of the value.
+
+    Returns:
+        Index after the value, ``-1`` for a valid partial, or None.
+    """
+    if start >= len(text):
+        return _PARTIAL
+    first = text[start]
+    if first == '"':
+        return match_string(text, start)
+    if first == "-" or "0" <= first <= "9":
+        return match_number(text, start)
+    if first == "[":
+        return match_sequence(text, start, "[", "]", keyed=False)
+    if first == "{":
+        return match_sequence(text, start, "{", "}", keyed=True)
+    return match_literal(text, start, ("true", "false", "null"))
+
+
+def match_sequence(
+    text: str,
+    start: int,
+    opening: str,
+    closing: str,
+    *,
+    keyed: bool,
+) -> int | None:
+    """Match a free-form JSON array or object.
+
+    Args:
+        text: Generated text.
+        start: Index of the opening bracket.
+        opening: ``[`` or ``{``.
+        closing: ``]`` or ``}``.
+        keyed: True for objects (``"key": value`` members).
+
+    Returns:
+        Index after the closing bracket, ``-1`` for a valid partial, or None.
+    """
+    n = len(text)
+    if start >= n:
+        return _PARTIAL
+    if text[start] != opening:
+        return None
+    i = skip_ws(text, start + 1)
+    if i >= n:
+        return _PARTIAL
+    if text[i] == closing:
+        return i + 1
+    while True:
+        if keyed:
+            key_end = match_string(text, i)
+            if key_end is None or key_end == _PARTIAL:
+                return key_end
+            colon = need(text, key_end, ":")
+            if colon is None or colon == _PARTIAL:
+                return colon
+            i = skip_ws(text, colon)
+        value_end = match_any_value(text, i)
+        if value_end is None or value_end == _PARTIAL:
+            return value_end
+        i = skip_ws(text, value_end)
+        if i >= n:
+            return _PARTIAL
+        if text[i] == closing:
+            return i + 1
+        if text[i] != ",":
+            return None
+        i = skip_ws(text, i + 1)
+        if i >= n:
+            return _PARTIAL
+
+
+class FunctionCallPrefixChecker(BaseModel):
     """Validate that a string is a prefix of some legal function-call JSON.
 
     Expected shape (whitespace allowed between tokens)::
@@ -29,14 +273,27 @@ class FunctionCallPrefixChecker:
     Parameter keys must appear in definition order for the chosen function.
     """
 
-    def __init__(self, functions: list[FunctionDefinition]) -> None:
+    model_config = ConfigDict(extra="forbid")
+
+    functions: list[FunctionDefinition]
+    _by_name: dict[str, FunctionDefinition] = PrivateAttr(default_factory=dict)
+
+    def __init__(self, functions: list[FunctionDefinition], **data: Any) -> None:
         """Initialize with available function schemas.
 
         Args:
             functions: Function definitions used for name/type constraints.
+            **data: Extra pydantic fields (none for now).
         """
-        self._functions = {fn.name: fn for fn in functions}
-        self._names = list(self._functions.keys())
+        super().__init__(functions=functions, **data)
+
+    def model_post_init(self, context: Any, /) -> None:
+        """Index the functions by name once the model is validated.
+
+        Args:
+            context: Pydantic validation context (unused).
+        """
+        self._by_name = {fn.name: fn for fn in self.functions}
 
     def check(self, text: str) -> ParseResult:
         """Check whether ``text`` is a valid (possibly partial) call.
@@ -47,181 +304,76 @@ class FunctionCallPrefixChecker:
         Returns:
             ParseResult with ok/complete flags and parsed object if done.
         """
-        i = 0
-        n = len(text)
-
-        def skip_ws(pos: int) -> int:
-            while pos < n and text[pos] in _WS:
-                pos += 1
-            return pos
-
-        def need(pos: int, literal: str) -> int | None:
-            """Match literal or a proper prefix of it at end of text."""
-            pos = skip_ws(pos)
-            remaining = text[pos:]
-            if remaining.startswith(literal):
-                return pos + len(literal)
-            if literal.startswith(remaining) and pos + len(remaining) == n:
-                # consumed rest of text as prefix of literal — OK partial
-                return -1  # sentinel: valid partial end
-            return None
-
-        def end_partial() -> ParseResult:
-            return ParseResult(ok=True, complete=False)
-
-        # {
-        i = skip_ws(i)
-        if i >= n:
-            return end_partial()
-        got = need(i, "{")
-        if got is None:
+        end = self._match_call(text)
+        if end is None:
             return ParseResult(ok=False)
-        if got == -1:
-            return end_partial()
-        i = got
-
-        # "name"
-        got = need(i, '"name"')
-        if got is None:
+        if end == _PARTIAL:
+            return ParseResult(ok=True)
+        if skip_ws(text, end) < len(text):
             return ParseResult(ok=False)
-        if got == -1:
-            return end_partial()
-        i = got
-
-        # :
-        got = need(i, ":")
-        if got is None:
-            return ParseResult(ok=False)
-        if got == -1:
-            return end_partial()
-        i = got
-
-        # " <function name> "
-        i = skip_ws(i)
-        if i >= n:
-            return end_partial()
-        if text[i] != '"':
-            return ParseResult(ok=False)
-        i += 1
-        name_start = i
-        while i < n and text[i] != '"':
-            if text[i] in "\n\r":
-                return ParseResult(ok=False)
-            i += 1
-        name_so_far = text[name_start:i]
-        if i >= n:
-            # unclosed name string — must be prefix of some function name
-            if any(name.startswith(name_so_far) for name in self._names):
-                return end_partial()
-            return ParseResult(ok=False)
-        # closed quote
-        i += 1
-        fname = name_so_far
-        if fname not in self._functions:
-            return ParseResult(ok=False)
-        fn = self._functions[fname]
-        param_names = list(fn.parameters.keys())
-
-        # ,
-        got = need(i, ",")
-        if got is None:
-            return ParseResult(ok=False)
-        if got == -1:
-            return end_partial()
-        i = got
-
-        # "parameters"
-        got = need(i, '"parameters"')
-        if got is None:
-            return ParseResult(ok=False)
-        if got == -1:
-            return end_partial()
-        i = got
-
-        # :
-        got = need(i, ":")
-        if got is None:
-            return ParseResult(ok=False)
-        if got == -1:
-            return end_partial()
-        i = got
-
-        # {
-        got = need(i, "{")
-        if got is None:
-            return ParseResult(ok=False)
-        if got == -1:
-            return end_partial()
-        i = got
-
-        # parameters body
-        for idx, pname in enumerate(param_names):
-            i = skip_ws(i)
-            if i >= n:
-                return end_partial()
-
-            # optional comma before params after the first
-            if idx > 0:
-                got = need(i, ",")
-                if got is None:
-                    return ParseResult(ok=False)
-                if got == -1:
-                    return end_partial()
-                i = got
-
-            # "pname"
-            got = need(i, f'"{pname}"')
-            if got is None:
-                return ParseResult(ok=False)
-            if got == -1:
-                return end_partial()
-            i = got
-
-            # :
-            got = need(i, ":")
-            if got is None:
-                return ParseResult(ok=False)
-            if got == -1:
-                return end_partial()
-            i = got
-
-            i = skip_ws(i)
-            if i >= n:
-                return end_partial()
-
-            value_end = self._match_value_prefix(text, i, fn.parameters[pname])
-            if value_end is None:
-                return ParseResult(ok=False)
-            if value_end == -1:
-                return end_partial()
-            i = value_end
-
-        # }
-        got = need(i, "}")
-        if got is None:
-            return ParseResult(ok=False)
-        if got == -1:
-            return end_partial()
-        i = got
-
-        # }
-        got = need(i, "}")
-        if got is None:
-            return ParseResult(ok=False)
-        if got == -1:
-            return end_partial()
-        i = got
-
-        i = skip_ws(i)
-        if i < n:
-            # trailing junk
-            return ParseResult(ok=False)
-
         try:
             parsed = json.loads(text)
-        except json.JSONDecodeError:
+        except ValueError:
             return ParseResult(ok=False)
         return ParseResult(ok=True, complete=True, parsed=parsed)
+
+    def _match_call(self, text: str) -> int | None:
+        """Match the whole ``{"name": ..., "parameters": {...}}`` object.
+
+        Args:
+            text: Generated text so far.
+
+        Returns:
+            Index after the call, ``-1`` for a valid partial, or None.
+        """
+        i = 0
+        for literal in ("{", '"name"', ":"):
+            got = need(text, i, literal)
+            if got is None or got == _PARTIAL:
+                return got
+            i = got
+
+        fn = None
+        i = skip_ws(text, i)
+        if i >= len(text):
+            return _PARTIAL
+        if text[i] != '"':
+            return None
+        close = text.find('"', i + 1)
+        typed = text[i + 1:] if close < 0 else text[i + 1:close]
+        if close < 0:
+            names = self._by_name
+            return _PARTIAL if any(n.startswith(typed) for n in names) else None
+        fn = self._by_name.get(typed)
+        if fn is None:
+            return None
+        i = close + 1
+
+        for literal in (",", '"parameters"', ":", "{"):
+            got = need(text, i, literal)
+            if got is None or got == _PARTIAL:
+                return got
+            i = got
+
+        for index, (pname, spec) in enumerate(fn.parameters.items()):
+            key = json.dumps(pname, ensure_ascii=False)
+            for literal in ((",",) if index else ()) + (key, ":"):
+                got = need(text, i, literal)
+                if got is None or got == _PARTIAL:
+                    return got
+                i = got
+            i = skip_ws(text, i)
+            value_end = self._match_value_prefix(text, i, spec)
+            if value_end is None or value_end == _PARTIAL:
+                return value_end
+            i = value_end
+
+        for literal in ("}", "}"):
+            got = need(text, i, literal)
+            if got is None or got == _PARTIAL:
+                return got
+            i = got
+        return i
 
     def _match_value_prefix(
         self,
@@ -240,81 +392,21 @@ class FunctionCallPrefixChecker:
             Index after the value, -1 if text ends inside a valid partial value,
             or None if invalid.
         """
-        n = len(text)
-        if start >= n:
-            return -1
-
-        ptype = spec.type
-        if ptype == "number":
-            return self._match_number(text, start)
-        if ptype == "boolean":
-            return self._match_bool(text, start)
-        if ptype == "string":
-            return self._match_string(text, start)
-        # fallback: treat as string
-        return self._match_string(text, start)
-
-    @staticmethod
-    def _match_number(text: str, start: int) -> int | None:
-        """Match a JSON number or a valid incomplete number prefix."""
-        n = len(text)
-        i = start
-        if text[i] == "-":
-            i += 1
-            if i >= n:
-                return -1
-        if i >= n:
-            return -1
-        if not text[i].isdigit():
-            return None
-        i += 1
-        while i < n and text[i].isdigit():
-            i += 1
-        if i < n and text[i] == ".":
-            i += 1
-            if i >= n:
-                return -1
-            if not text[i].isdigit():
-                # allow trailing dot only as partial ("2.")
-                return None
-            while i < n and text[i].isdigit():
-                i += 1
-        # exponent not required for this project
-        if i >= n:
-            # complete-looking number at EOF is still partial structurally
-            # (caller continues with comma/brace). Treat as finished value.
-            return i
-        # peek: number ends before non-number char
-        return i
-
-    @staticmethod
-    def _match_bool(text: str, start: int) -> int | None:
-        """Match true/false or a prefix thereof."""
-        rest = text[start:]
-        for lit in ("true", "false"):
-            if rest.startswith(lit):
-                return start + len(lit)
-            if lit.startswith(rest):
-                return -1
-        return None
-
-    @staticmethod
-    def _match_string(text: str, start: int) -> int | None:
-        """Match a JSON string or an unclosed valid string prefix."""
-        n = len(text)
-        if text[start] != '"':
-            return None
-        i = start + 1
-        while i < n:
-            ch = text[i]
-            if ch == "\\":
-                if i + 1 >= n:
-                    return -1
-                i += 2
-                continue
-            if ch == '"':
-                return i + 1
-            if ch == "\n" or ch == "\r":
-                return None
-            i += 1
-        return -1  # unclosed string — OK partial
+        if start >= len(text):
+            return _PARTIAL
+        ptype = spec.type.lower()
+        if ptype in ("number", "float"):
+            return match_number(text, start)
+        if ptype in ("integer", "int"):
+            return match_number(text, start, integer=True)
+        if ptype in ("boolean", "bool"):
+            return match_literal(text, start, ("true", "false"))
+        if ptype in ("string", "str"):
+            return match_string(text, start)
+        if ptype == "null":
+            return match_literal(text, start, ("null",))
+        if ptype == "array":
+            return match_sequence(text, start, "[", "]", keyed=False)
+        if ptype == "object":
+            return match_sequence(text, start, "{", "}", keyed=True)
+        return match_any_value(text, start)

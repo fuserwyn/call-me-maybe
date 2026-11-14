@@ -114,10 +114,9 @@ dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "pydantic" },
-    { name = "regex" },
 ]
 
-[package.optional-dependencies]
+[package.dev-dependencies]
 dev = [
     { name = "flake8" },
     { name = "mypy" },
@@ -125,14 +124,16 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "flake8", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "llm-sdk", directory = "llm_sdk" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8.0" },
     { name = "numpy", specifier = ">=1.26.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
-    { name = "regex", specifier = ">=2024.0.0" },
 ]
-provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "flake8", specifier = ">=7.0.0" },
+    { name = "mypy", specifier = ">=1.8.0" },
+]
 
 [[package]]
 name = "certifi"

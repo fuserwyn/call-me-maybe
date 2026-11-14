@@ -11,7 +11,7 @@ import sys
 from typing import Any
 
 import numpy as np
-from llm_sdk import Small_LLM_Model  # type: ignore[attr-defined]
+from pydantic import BaseModel, ConfigDict, PrivateAttr
 
 from src.bonus.cache import ConstraintCache, legal_ids
 from src.bonus.nested import NestedCallChecker, repair_json
@@ -24,17 +24,26 @@ from src.prompt_builder import build_prompt
 _MAX_NEW_TOKENS = 192
 
 
-class BonusDecoder:
+class BonusDecoder(BaseModel):
     """Function calling with a hand-rolled tokenizer and backtracking."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    llm: Any
+    tokenizer: BonusTokenizer
+    functions: list[FunctionDefinition]
+    model_name: str
+    visualize: bool = False
+    _checker: NestedCallChecker = PrivateAttr()
+    _id_to_text: dict[int, str] = PrivateAttr(default_factory=dict)
+    _cache: ConstraintCache = PrivateAttr(default_factory=ConstraintCache)
 
     def __init__(
         self,
-        model: Small_LLM_Model,
+        model: Any,
         tokenizer: BonusTokenizer,
         functions: list[FunctionDefinition],
-        *,
-        model_name: str,
-        visualize: bool = False,
+        **data: Any,
     ) -> None:
         """Store the model, tokenizer, and schema.
 
@@ -42,17 +51,21 @@ class BonusDecoder:
             model: SDK model. Only logits and file paths are used.
             tokenizer: Recoded BPE tokenizer.
             functions: Tools the call may invoke, including nested schemas.
-            model_name: Hugging Face id, recorded in the trace.
-            visualize: Print each accepted token.
+            **data: ``model_name`` (recorded in the trace) and
+                ``visualize`` (print each accepted token).
         """
-        self._model = model
-        self._tokenizer = tokenizer
-        self._functions = functions
-        self._model_name = model_name
-        self._visualize = visualize
-        self._checker = NestedCallChecker(functions)
-        self._id_to_text = tokenizer.id_to_text_map()
-        self._cache = ConstraintCache()
+        super().__init__(
+            llm=model, tokenizer=tokenizer, functions=functions, **data
+        )
+
+    def model_post_init(self, context: Any, /) -> None:
+        """Build the checker and the id → text table.
+
+        Args:
+            context: Pydantic validation context (unused).
+        """
+        self._checker = NestedCallChecker(self.functions)
+        self._id_to_text = self.tokenizer.id_to_text_map()
 
     def generate(self, prompt: str) -> tuple[FunctionCallResult, PromptTrace]:
         """Generate one function call and a visualization trace.
@@ -63,8 +76,8 @@ class BonusDecoder:
         Returns:
             The structured call and the token trace.
         """
-        trace = PromptTrace(prompt=prompt, model_name=self._model_name)
-        prompt_ids = self._tokenizer.encode(build_prompt(prompt, self._functions))
+        trace = PromptTrace(prompt=prompt, model_name=self.model_name)
+        prompt_ids = self.tokenizer.encode(build_prompt(prompt, self.functions))
         budget = BacktrackBudget()
         root_options = self._options(prompt_ids, "", budget.max_alternatives)
         stack: list[SearchFrame] = [
@@ -91,7 +104,7 @@ class BonusDecoder:
                 continue
 
             new_ids = frame.token_ids + [choice]
-            new_text = self._tokenizer.decode(new_ids)
+            new_text = self.tokenizer.decode(new_ids)
             checked = self._checker.check(new_text)
             if not checked.ok:
                 continue
@@ -103,7 +116,7 @@ class BonusDecoder:
             )
             if checked.complete and checked.parsed is not None:
                 steps.append(step)
-                if self._visualize:
+                if self.visualize:
                     print(format_step(step, new_text))
                 trace.steps = steps
                 trace.output = new_text
@@ -119,7 +132,7 @@ class BonusDecoder:
                 if not budget.spend():
                     break
                 continue
-            if self._visualize:
+            if self.visualize:
                 print(format_step(step, new_text))
             steps.append(step)
             stack.append(
@@ -152,7 +165,7 @@ class BonusDecoder:
     ) -> list[tuple[int, float]]:
         """Legal next tokens, best logit first. One logits call."""
         scores = np.asarray(
-            self._model.get_logits_from_input_ids(input_ids),
+            self.llm.get_logits_from_input_ids(input_ids),
             dtype=np.float64,
         )
         return legal_ids(

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, PrivateAttr
 
 from src.bonus.nested import NestedCallChecker
 
@@ -17,14 +17,14 @@ class CandidateBatch(BaseModel):
     width: int
 
 
-class ConstraintCache:
+class ConstraintCache(BaseModel):
     """Remember whether a token text keeps a prefix legal."""
 
-    def __init__(self) -> None:
-        """Create an empty cache."""
-        self._ok: dict[tuple[str, str], bool] = {}
-        self.hits = 0
-        self.misses = 0
+    model_config = ConfigDict(extra="forbid")
+
+    hits: int = 0
+    misses: int = 0
+    _ok: dict[tuple[str, str], bool] = PrivateAttr(default_factory=dict)
 
     def allows(self, checker: NestedCallChecker, prefix: str, piece: str) -> bool:
         """Return True when ``prefix + piece`` is still a valid call prefix.
@@ -98,6 +98,7 @@ def legal_ids(
     seen: set[int] = set()
 
     def consider(token_id: int) -> None:
+        """Add ``token_id`` to ``found`` if it is new and legal."""
         if token_id in seen or len(found) >= limit:
             return
         seen.add(token_id)
