@@ -289,6 +289,62 @@ The decoder then sorts the ids by score, looks up each candidate's bytes in
 On the first step of "What is the sum of 2 and 3?", for example, the top score
 (21.23) belongs to `' {"'`, which the checker accepts, so the call starts there.
 
+### The same idea in a real application
+
+Production code does not write a decoder or a checker. It describes the
+functions with JSON Schema, the model (through an API or a local server such as
+vLLM) returns a call, and the application runs the function and sends the
+result back. A simplified example in the OpenAI-style API:
+
+```python
+# 1. Plain Python functions
+def fn_add_numbers(a: float, b: float) -> float:
+    return a + b
+
+FUNCTIONS = {"fn_add_numbers": fn_add_numbers}
+
+# 2. Their description for the model: the same JSON Schema as functions_definition.json
+tools = [{
+    "type": "function",
+    "function": {
+        "name": "fn_add_numbers",
+        "description": "Add two numbers together",
+        "parameters": {
+            "type": "object",
+            "properties": {"a": {"type": "number"}, "b": {"type": "number"}},
+            "required": ["a", "b"],
+        },
+        "strict": True,          # constrained decoding on the server (our checker)
+    },
+}]
+
+messages = [{"role": "user", "content": "What is the sum of 2 and 3?"}]
+response = client.chat.completions.create(model=..., messages=messages, tools=tools)
+
+# 3. The model returned a call (our FunctionCallResult)
+call = response.choices[0].message.tool_calls[0]
+args = json.loads(call.function.arguments)        # {"a": 2, "b": 3}
+
+# 4. The application runs the function
+result = FUNCTIONS[call.function.name](**args)    # 5
+
+# 5. The result goes back to the model, which writes the final answer
+messages += [response.choices[0].message,
+             {"role": "tool", "tool_call_id": call.id, "content": str(result)}]
+final = client.chat.completions.create(model=..., messages=messages, tools=tools)
+print(final.choices[0].message.content)           # "The sum of 2 and 3 is 5."
+```
+
+| This project | Real application |
+|---|---|
+| `build_prompt` lists the functions | `tools=[...]`; the provider adds them to the prompt in its own format |
+| `encode`, `get_logits_from_input_ids`, the generation loop | inside the API or the inference server |
+| `_select_token` + `FunctionCallPrefixChecker` | `strict` mode of the API, or libraries such as XGrammar / Outlines |
+| `FunctionCallResult` | `tool_calls` in the response |
+| not required by the subject | running the function and sending the result back |
+
+The subject asks only for step 3: choose the function and its arguments.
+
 ## Design decisions
 
 - **Prefix grammar over hard-coded answers** — the model still chooses function names and argument values via logits; we only restrict the legal token set.
