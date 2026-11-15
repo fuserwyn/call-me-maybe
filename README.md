@@ -183,6 +183,39 @@ The table is built once (`model_post_init`) and only read during generation.
 Values are bytes, not strings, because a token can hold half of a multi-byte
 character.
 
+### What the decoder holds
+
+`load_decoder(functions)` is called once, before the loop over prompts. It
+loads the model and builds a `ConstrainedDecoder`; pydantic then calls
+`model_post_init`, which fills the private fields. The same object serves
+every prompt:
+
+```text
+decoder: ConstrainedDecoder
+|
++-- llm            Small_LLM_Model
+|                  loaded Qwen3-0.6B (1.4 GB of weights, on mps / cuda / cpu)
+|                  encode(text) -> token ids
+|                  get_logits_from_input_ids(ids) -> 151,936 scores
+|
++-- functions      list[FunctionDefinition], read from functions_definition.json
+|                  used by build_prompt (the function list in the prompt)
+|
++-- _checker       FunctionCallPrefixChecker
+|   +-- functions    the same definitions
+|   +-- _by_name     {"fn_add_numbers": <definition>, "fn_greet": <definition>, ...}
+|   +-- check(text)  -> invalid / valid prefix / complete
+|
++-- _id_to_bytes   dict[int, bytes], 151,643 pairs built from vocab.json
+|                  {2629: b' sum', 606: b'name', 4913: b'{"', ...}
+|
++-- methods
+    +-- generate(prompt)    -> FunctionCallResult   (called by the pipeline)
+    +-- _select_token(...)  -> best token the checker accepts
+    +-- check_bytes(...)    -> bytes -> text -> _checker.check
+    +-- _to_result(...)     -> wraps the parsed call in FunctionCallResult
+```
+
 ## Design decisions
 
 - **Prefix grammar over hard-coded answers** — the model still chooses function names and argument values via logits; we only restrict the legal token set.
