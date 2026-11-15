@@ -9,7 +9,22 @@ from __future__ import annotations
 
 import json
 
-from src.models import FunctionDefinition
+from src.models import FunctionDefinition, ParameterSpec
+
+
+def type_hint(spec: ParameterSpec) -> str:
+    """Describe the value a parameter accepts.
+
+    Args:
+        spec: Parameter schema.
+
+    Returns:
+        The type name, or the allowed values when the schema has ``enum``.
+    """
+    if spec.enum is None:
+        return spec.type
+    values = ", ".join(json.dumps(v, ensure_ascii=False) for v in spec.enum)
+    return f"one of {values}"
 
 
 def call_template(fn: FunctionDefinition) -> str:
@@ -22,7 +37,7 @@ def call_template(fn: FunctionDefinition) -> str:
         JSON with ``<type>`` placeholders for every argument.
     """
     params = ",".join(
-        f"{json.dumps(name, ensure_ascii=False)}:<{spec.type}>"
+        f"{json.dumps(name, ensure_ascii=False)}:<{type_hint(spec)}>"
         for name, spec in fn.parameters.items()
     )
     name = json.dumps(fn.name, ensure_ascii=False)
@@ -43,7 +58,7 @@ def format_functions(functions: list[FunctionDefinition]) -> str:
         lines.append(f"- {fn.name}: {fn.description}")
         for name, spec in fn.parameters.items():
             hint = f" - {spec.description}" if spec.description else ""
-            lines.append(f"    {name} ({spec.type}){hint}")
+            lines.append(f"    {name} ({type_hint(spec)}){hint}")
         lines.append(f"    call: {call_template(fn)}")
     return "\n".join(lines)
 

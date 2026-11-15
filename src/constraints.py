@@ -135,7 +135,8 @@ def match_literal(text: str, start: int, choices: tuple[str, ...]) -> int | None
         Index after the keyword, ``-1`` for a valid partial, or None.
     """
     rest = text[start:]
-    for word in choices:
+    # Longest first, so "10" is not read as "1" followed by junk.
+    for word in sorted(choices, key=len, reverse=True):
         if rest.startswith(word):
             return start + len(word)
     if any(word.startswith(rest) for word in choices):
@@ -403,6 +404,9 @@ class FunctionCallPrefixChecker(BaseModel):
         """
         if start >= len(text):
             return _PARTIAL
+        if spec.enum is not None:
+            allowed = tuple(json.dumps(v, ensure_ascii=False) for v in spec.enum)
+            return match_literal(text, start, allowed)
         ptype = spec.type.lower()
         if ptype in ("number", "float"):
             return match_number(text, start)

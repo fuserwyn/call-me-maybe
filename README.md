@@ -375,7 +375,9 @@ The subject asks only for step 3: choose the function and its arguments.
 - **Pydantic models** for definitions, prompts, and results (`models.py`).
 - **Fast constrained argmax** — scan tokens from highest logit downward and take the first legal one instead of masking the full vocabulary every time (same result, much faster when the model already prefers valid JSON).
 - **Prompt built only from the loaded definitions** — each function is listed with its parameters and the exact JSON shape of a call. There are no examples taken from the test files, so nothing depends on the sample prompts. General rules (copy quoted text exactly, write a regex for what the user describes) help the 0.6B model with argument values.
-- **Lenient input schema** — extra JSON-schema keys (`required`, per-parameter `description`, ...) are accepted; parameter descriptions are shown to the model.
+- **Lenient input schema** — other function sets must load: `description`, `parameters` and `returns` may be missing, a parameter without `type` accepts any JSON value, and extra JSON-schema keys (`required`, `minimum`, ...) are ignored. Parameter descriptions are shown to the model.
+- **`number` arguments are written as floats** — `3` becomes `3.0` in the output. `number` is the type of a Python `float` in the definitions, and the grading tool calls the real functions, which check `isinstance(a, float)`. `integer` arguments stay ints.
+- **`enum` is enforced** — when a parameter lists allowed values, the prompt shows them and the checker accepts only those exact JSON values (longest match first, so `10` is not read as `1`).
 
 ## Performance analysis
 

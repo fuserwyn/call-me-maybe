@@ -231,7 +231,8 @@ class InProcessErrorTest(unittest.TestCase):
         self.assertGreater(len(functions), 0)
         self.assertGreater(len(prompts), 0)
         for fn in functions:
-            self.assertTrue(fn.name and fn.description and fn.returns.type)
+            self.assertTrue(fn.name and fn.description)
+            self.assertIsNotNone(fn.returns)
 
 
 if __name__ == "__main__":

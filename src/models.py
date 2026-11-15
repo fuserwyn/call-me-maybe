@@ -8,14 +8,18 @@ from pydantic import BaseModel, ConfigDict, Field
 class ParameterSpec(BaseModel):
     """Schema for a single function parameter.
 
-    Unknown JSON-schema keywords (``minimum``, ``enum`` ...) are ignored so
+    ``enum`` restricts the value to a fixed list. A missing ``type`` means any
+    JSON value. Other JSON-schema keywords (``minimum`` ...) are ignored so
     that other function sets still load.
     """
 
     model_config = ConfigDict(extra="ignore")
 
-    type: str = Field(..., description="JSON type: number, string, boolean, etc.")
+    type: str = Field("any", description="JSON type: number, string, boolean, etc.")
     description: str | None = None
+    enum: list[Any] | None = Field(
+        None, description="Allowed values; the generated value must be one of them."
+    )
 
 
 class ReturnSpec(BaseModel):
@@ -30,15 +34,16 @@ class FunctionDefinition(BaseModel):
     """One callable tool exposed to the LLM.
 
     Extra top-level keys such as ``required`` are accepted and ignored:
-    every declared parameter is always generated.
+    every declared parameter is always generated. ``description``,
+    ``parameters`` and ``returns`` may be missing.
     """
 
     model_config = ConfigDict(extra="ignore")
 
     name: str = Field(..., min_length=1)
-    description: str
-    parameters: dict[str, ParameterSpec]
-    returns: ReturnSpec
+    description: str = ""
+    parameters: dict[str, ParameterSpec] = Field(default_factory=dict)
+    returns: ReturnSpec | None = None
 
 
 class PromptItem(BaseModel):

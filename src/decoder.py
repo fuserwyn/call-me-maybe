@@ -140,9 +140,14 @@ class ConstrainedDecoder(BaseModel):
                 return int(token_id), result
         return None
 
-    @staticmethod
-    def _to_result(prompt: str, parsed: dict[str, Any]) -> FunctionCallResult:
+    def _to_result(self, prompt: str, parsed: dict[str, Any]) -> FunctionCallResult:
         """Convert a parsed JSON object into FunctionCallResult.
+
+        A ``number`` argument written without a fraction (``3``) is stored as
+        a float (``3.0``): ``number`` is the type of Python ``float`` in the
+        definitions, and the called function may check ``isinstance(a,
+        float)``. ``integer`` arguments stay ints, and so does an int too large
+        to fit a float exactly.
 
         Args:
             prompt: Original user prompt.
@@ -155,4 +160,14 @@ class ConstrainedDecoder(BaseModel):
         parameters = parsed.get("parameters", {})
         if not isinstance(parameters, dict):
             parameters = {}
+        fn = next((f for f in self.functions if f.name == name), None)
+        if fn is not None:
+            for key, spec in fn.parameters.items():
+                value = parameters.get(key)
+                if (spec.type.lower() in ("number", "float")
+                        and spec.enum is None
+                        and isinstance(value, int)
+                        and not isinstance(value, bool)
+                        and float(value) == value):
+                    parameters[key] = float(value)
         return FunctionCallResult(prompt=prompt, name=name, parameters=parameters)
