@@ -404,6 +404,63 @@ Reliability comes mainly from structural masking: even when the raw model would 
 - IO / missing-file paths return clear errors and exit non-zero instead of crashing.
 - Note: reviewers may swap input JSON; nothing is hard-coded to the sample answers.
 
+## How to verify the project
+
+### What the subject requires (V.5)
+
+| Requirement | How it is checked |
+|---|---|
+| 100% valid JSON output with `prompt`, `name`, `parameters` | the output file loads with `json.loads`; every name is a defined function and every argument has its declared type |
+| At least 90% correct calls (right function and arguments) | each result compared with the expected call for its prompt |
+| Whole run under 5 minutes | timed run |
+| `flake8` + `mypy` clean, no `torch` / `transformers` imports in `src/` | `make lint`, tests |
+
+### By hand
+
+```bash
+make fclean          # start from a clean state (optional)
+make install
+make run             # or: make runner (CPU-only venv)
+cat data/output/function_calling_results.json
+```
+
+Compare every entry with its prompt, e.g.:
+
+```json
+{"prompt": "What is the sum of 2 and 3?", "name": "fn_add_numbers", "parameters": {"a": 2.0, "b": 3.0}}
+```
+
+The program must also work with other definitions and prompts, without code
+changes:
+
+```bash
+uv run python -m src --functions_definition my_functions.json \
+  --input my_prompts.json --output my_results.json
+```
+
+Missing or broken input files must end with a clear error message and a
+non-zero exit code, not a traceback.
+
+### Automated tests
+
+```bash
+make test            # everything, including the real model (a few minutes)
+make test-fast       # without the real model
+make lint            # flake8 + mypy
+```
+
+| Test file | What it checks |
+|---|---|
+| `test_subject_v_real_model.py` | runs Qwen3-0.6B on the sample: accuracy >= 90%, every output schema-valid, under 5 minutes; edge cases (special characters, large numbers, booleans, integers) |
+| `test_subject_v_decoding.py` | checker and decoder with a fake model: an invalid token is never chosen |
+| `test_subject_v_no_hardcoding.py` | no sample function names or answers in `src/` |
+| `test_subject_iv_rules.py` | project rules: uv, pydantic, no `torch` / `transformers` in `src/` |
+| `test_subject_cli_and_errors.py` | CLI arguments, missing and invalid files |
+| `test_subject_vi_viii_readme_repo.py` | README sections in English, `llm_sdk` in the repository, no `data/output` committed |
+
+Regex arguments are checked by applying them with `re.sub` and comparing the
+result, because several patterns can be correct.
+
 ## Example usage
 
 ```bash
