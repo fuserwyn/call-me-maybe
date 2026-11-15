@@ -114,6 +114,50 @@ The prefix checker enforces:
 
 Invalid tokens never win, so the final string is always parseable JSON matching the schema when generation finishes successfully.
 
+### Prompt example
+
+`build_prompt` turns the function definitions and one user request into a
+single plain text (no chat template). The rules are fixed; the function list
+is generated from `functions_definition.json`; only the `User request` line
+changes between prompts. The model continues the text after `JSON:`.
+This is the exact prompt for `Greet shrek` with the sample definitions:
+
+```text
+You are a function-calling system. Choose the ONE function that fulfils the user request and fill in its arguments.
+Rules:
+- Output only the JSON call, nothing else.
+- Take argument values from the request. Copy quoted text exactly, without the surrounding quotes.
+- Numbers are plain JSON numbers, not strings.
+- When an argument is a regular expression, write a pattern that matches what the user describes, not the words of the description. For a kind of character, use a character class that lists every member of that kind (e.g. [a-zA-Z] for letters). Use + to match a run of characters.
+- When the user names a symbol in words, use the symbol itself.
+
+Available functions:
+- fn_add_numbers: Add two numbers together and return their sum.
+    a (number)
+    b (number)
+    call: {"name":"fn_add_numbers","parameters":{"a":<number>,"b":<number>}}
+- fn_greet: Generate a greeting message for a person by name.
+    name (string)
+    call: {"name":"fn_greet","parameters":{"name":<string>}}
+- fn_reverse_string: Reverse a string and return the reversed result.
+    s (string)
+    call: {"name":"fn_reverse_string","parameters":{"s":<string>}}
+- fn_get_square_root: Calculate the square root of a number.
+    a (number)
+    call: {"name":"fn_get_square_root","parameters":{"a":<number>}}
+- fn_substitute_string_with_regex: Replace all occurrences matching a regex pattern in a string.
+    source_string (string)
+    regex (string)
+    replacement (string)
+    call: {"name":"fn_substitute_string_with_regex","parameters":{"source_string":<string>,"regex":<string>,"replacement":<string>}}
+
+User request: Greet shrek
+JSON:
+```
+
+The model, guided by the mask, completes it with
+`{"name": "fn_greet", "parameters": {"name": "shrek"}}`.
+
 ## Design decisions
 
 - **Prefix grammar over hard-coded answers** — the model still chooses function names and argument values via logits; we only restrict the legal token set.
