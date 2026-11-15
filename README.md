@@ -424,7 +424,18 @@ make run             # or: make runner (CPU-only venv)
 cat data/output/function_calling_results.json
 ```
 
-Compare every entry with its prompt, e.g.:
+Check the written file automatically (valid JSON, one schema-valid result per
+prompt in input order, and at least 90% correct calls on the shipped sample):
+
+```bash
+make check-output
+# OK   valid JSON, 11 results, all schema-valid
+# OK   accuracy 100% (at least 90% required)
+
+# other files: python tests/check_output.py <output> <functions_definition> <input>
+```
+
+Or compare every entry with its prompt by eye, e.g.:
 
 ```json
 {"prompt": "What is the sum of 2 and 3?", "name": "fn_add_numbers", "parameters": {"a": 2.0, "b": 3.0}}
@@ -457,6 +468,7 @@ make lint            # flake8 + mypy
 | `test_subject_iv_rules.py` | project rules: uv, pydantic, no `torch` / `transformers` in `src/` |
 | `test_subject_cli_and_errors.py` | CLI arguments, missing and invalid files |
 | `test_subject_vi_viii_readme_repo.py` | README sections in English, `llm_sdk` in the repository, no `data/output` committed |
+| `test_output_file.py` | the file left by the last `make run` (skipped when there is none), and that the checker rejects broken files |
 
 Regex arguments are checked by applying them with `re.sub` and comparing the
 result, because several patterns can be correct.

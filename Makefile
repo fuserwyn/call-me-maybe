@@ -1,4 +1,4 @@
-.PHONY: install run cpu-venv runner test-runner debug clean fclean lint lint-strict test test-fast
+.PHONY: install run check-output cpu-venv runner test-runner debug clean fclean lint lint-strict test test-fast
 
 install:
 	sh goinfre.sh uv sync
@@ -53,3 +53,6 @@ test:
 test-fast:
 	SKIP_SLOW=1 sh goinfre.sh uv run --with pytest --with pytest-cov python -m pytest tests \
 		--cov=src --cov-report=term-missing
+
+check-output:
+	sh goinfre.sh uv run python tests/check_output.py
