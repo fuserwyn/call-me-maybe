@@ -23,6 +23,10 @@ ENV/
 # Project output (generated at review)
 data/output/
 
+# 42 moulinette (archive from the evaluation page and its unpacked copy)
+moulinette.zip
+.moulinette/
+
 # IDE / OS
 .idea/
 .vscode/

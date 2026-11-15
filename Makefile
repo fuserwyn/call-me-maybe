@@ -1,4 +1,4 @@
-.PHONY: install run check-output cpu-venv runner test-runner debug clean fclean lint lint-strict test test-fast
+.PHONY: install run check-output moulinette moulinette-runner cpu-venv runner test-runner debug clean fclean lint lint-strict test test-fast
 
 install:
 	sh goinfre.sh uv sync
@@ -56,3 +56,13 @@ test-fast:
 
 check-output:
 	sh goinfre.sh uv run python tests/check_output.py
+
+# 42 moulinette: put moulinette.zip in the project root. SET=public for the
+# public set.
+SET ?= private
+
+moulinette:
+	sh moulinette.sh $(SET)
+
+moulinette-runner: cpu-venv
+	PYTHON=$(CPU_VENV)/bin/python sh moulinette.sh $(SET)

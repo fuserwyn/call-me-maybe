@@ -22,6 +22,7 @@ remove .venv
 remove .venv-cpu
 remove data/output
 remove .coverage
+remove .moulinette
 find . -path ./.git -prune -o -type d \
     \( -name __pycache__ -o -name .mypy_cache -o -name .pytest_cache \) \
     -prune -exec rm -rf {} +
@@ -29,6 +30,7 @@ find . -path ./.git -prune -o -type d \
 if [ -n "${USER:-}" ] && [ -n "$project" ] && [ -d "$GOINFRE" ] \
     && [ -w "$GOINFRE" ]; then
     remove "$GOINFRE/venvs/$project"
+    remove "$GOINFRE/venvs/moulinette"
     rmdir "$GOINFRE/venvs" 2>/dev/null
     remove "$GOINFRE/.uv-cache"
     remove "$GOINFRE/.huggingface"

@@ -454,6 +454,43 @@ uv run python -m src --functions_definition my_functions.json \
 Missing or broken input files must end with a clear error message and a
 non-zero exit code, not a traceback.
 
+### With the 42 moulinette
+
+Download `moulinette.zip` from the evaluation page and put it in the project
+root (it is git-ignored). One command unpacks it into `.moulinette/`,
+generates the exercise set, runs the project on it and grades the answers:
+
+```bash
+make moulinette                  # private set
+make moulinette SET=public       # public set
+make moulinette-runner           # same, with the CPU-only .venv-cpu
+# without make: sh moulinette.sh [private|public]
+```
+
+Like every other target it goes through `goinfre.sh`, so on 42 machines the
+project venv, the moulinette venv and the model are placed in goinfre. It
+runs exactly the steps of the evaluation scale:
+
+```bash
+cd .moulinette/moulinette
+uv sync
+uv run python -m moulinette prepare_exercises --set private
+# (the project runs on data/input/ and writes student_answers.json)
+uv run python -m moulinette grade_student_answers --set private \
+  --student_answer_path student_answers.json
+```
+
+Current result: private set 10/11 (90.9%), public set 11/11 (100%).
+
+The moulinette calls the real Python functions with the generated arguments,
+and they check `isinstance(a, float)` for `number` parameters. That is why
+`number` arguments are written as floats (`3.0`), although the evaluation
+scale also accepts JSON integers for `number`. The one remaining miss is
+`Say "hello" to {name}`: the model drops the inner quotes (it scores
+`' hello'` above `' \"'`); the checker allows both.
+
+`make fclean` removes `.moulinette/` and the moulinette venv in goinfre.
+
 ### Automated tests
 
 ```bash

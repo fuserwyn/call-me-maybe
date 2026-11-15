@@ -37,11 +37,11 @@ ignore_missing_imports = true
 disallow_untyped_defs = true
 check_untyped_defs = true
 files = ["src"]
-exclude = ["(?x)(^\\.venv[^/]*/|^llm_sdk/|^data/)"]
+exclude = ["(?x)(^\\.venv[^/]*/|^llm_sdk/|^data/|^\\.moulinette/)"]
 
 [tool.flake8]
 max-line-length = 88
-exclude = [".venv", ".venv-cpu", "llm_sdk", "__pycache__", ".mypy_cache"]
+exclude = [".venv", ".venv-cpu", "llm_sdk", ".moulinette", "__pycache__", ".mypy_cache"]
 
 [tool.coverage.run]
 source = ["src"]
