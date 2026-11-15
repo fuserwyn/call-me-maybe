@@ -216,6 +216,25 @@ decoder: ConstrainedDecoder
     +-- _to_result(...)     -> wraps the parsed call in FunctionCallResult
 ```
 
+### Inside one `get_logits_from_input_ids` call
+
+The decoder only passes token ids; everything else happens inside the model,
+once per generation step (numbers from the Qwen3-0.6B `config.json`):
+
+1. It receives the ids: the prompt (about 393 ids) plus the tokens generated so far.
+2. Each id selects one row of the embedding table (151,936 rows x 1,024 numbers),
+   so the text becomes a list of vectors. The table lives in the model weights;
+   `vocab.json` only maps text to the same ids.
+3. The vectors go through 28 transformer layers, where every position attends
+   to the previous ones, so the last vector carries the whole context.
+4. That last vector is compared (dot product) with the vector of every token in
+   the table, giving one score per token.
+5. It returns those 151,936 scores as a plain `list[float]`: the logits. The
+   index is the token id; they are raw scores, not probabilities.
+
+The decoder then sorts the ids by score, looks up each candidate's bytes in
+`_id_to_bytes` and keeps the first one the checker accepts.
+
 ## Design decisions
 
 - **Prefix grammar over hard-coded answers** — the model still chooses function names and argument values via logits; we only restrict the legal token set.
