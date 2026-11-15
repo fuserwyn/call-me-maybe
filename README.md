@@ -320,9 +320,32 @@ tools = [{
 
 messages = [{"role": "user", "content": "What is the sum of 2 and 3?"}]
 response = client.chat.completions.create(model=..., messages=messages, tools=tools)
+# response = ChatCompletion(
+#     id="chatcmpl-...", model="...",
+#     choices=[                              # one answer unless n > 1 is asked
+#         Choice(
+#             index=0,
+#             finish_reason="tool_calls",    # stopped to call a tool, not "stop"
+#             message=ChatCompletionMessage(
+#                 role="assistant",
+#                 content=None,              # no text, only the call
+#                 tool_calls=[...],          # see `call` below
+#             ),
+#         ),
+#     ],
+#     usage=CompletionUsage(prompt_tokens=..., completion_tokens=..., total_tokens=...),
+# )
 
 # 3. The model returned a call (our FunctionCallResult)
 call = response.choices[0].message.tool_calls[0]
+# call = ChatCompletionMessageToolCall(
+#     id="call_abc123",                      # links the result in step 5 to this call
+#     type="function",
+#     function=Function(
+#         name="fn_add_numbers",
+#         arguments='{"a": 2, "b": 3}',      # a JSON *string*, hence json.loads
+#     ),
+# )
 args = json.loads(call.function.arguments)        # {"a": 2, "b": 3}
 
 # 4. The application runs the function
