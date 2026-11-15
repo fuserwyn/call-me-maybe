@@ -158,6 +158,31 @@ JSON:
 The model, guided by the mask, completes it with
 `{"name": "fn_greet", "parameters": {"name": "shrek"}}`.
 
+### From vocab.json to bytes
+
+The model returns token ids; the checker needs the text of a candidate.
+`vocab.json` (from `get_path_to_vocab_file`) maps 151,643 token strings to ids,
+written in byte-level BPE notation: each of the 256 possible bytes has its own
+visible character (`Ġ` = space `0x20`, `Ċ` = newline `0x0A`, the two bytes of
+`é` are `Ã©`). When the decoder is created, `build_id_to_bytes` reverses the
+mapping and decodes every token into real bytes:
+
+```python
+# bytes_to_unicode(): 256 pairs byte -> character, e.g. {32: 'Ġ', 65: 'A', 208: 'Ð', ...}
+byte_decoder = {char: byte for byte, char in bytes_to_unicode().items()}
+# {'Ġ': 32, 'A': 65, 'Ð': 208, ...}
+
+for token, token_id in vocab.items():           # ("Ġsum", 2629)
+    result[token_id] = token_to_bytes(token, byte_decoder)
+                       # 'Ġ'->32, 's'->115, 'u'->117, 'm'->109 -> b' sum'
+# result[2629] = b' sum'
+# result[963] = b'\xc3\xa9'              ("Ã©", the UTF-8 bytes of "é")
+```
+
+The table is built once (`model_post_init`) and only read during generation.
+Values are bytes, not strings, because a token can hold half of a multi-byte
+character.
+
 ## Design decisions
 
 - **Prefix grammar over hard-coded answers** — the model still chooses function names and argument values via logits; we only restrict the legal token set.
