@@ -114,6 +114,30 @@ The prefix checker enforces:
 
 Invalid tokens never win, so the final string is always parseable JSON matching the schema when generation finishes successfully.
 
+### How `_match_call` reads a call
+
+`_match_call` (in `constraints.py`) walks the text left to right with a cursor
+and checks it in five parts:
+
+```text
+{"name":"fn_add_numbers","parameters":{"a":2.0,"b":3.0}}
+└──1──┘└──────2───────┘└──────3──────┘└────────4───────┘└5┘
+```
+
+| Part | What it checks |
+|---|---|
+| 1 | `{` `"name"` `:` with `need` |
+| 2 | the function name: a key of `_by_name`, or the start of one while the quote is still open |
+| 3 | `,` `"parameters"` `:` `{` with `need` |
+| 4 | each parameter of that function in definition order: `,` (not before the first), `"a"`, `:`, then the value with `_match_value_prefix`, which picks the check for its type |
+| 5 | the two closing `}` `}` with `need` |
+
+Each part returns the position after it (go on), `-1` when the text ends
+inside it (valid so far, stop here) or `None` (invalid). `check` turns the
+final answer into `ParseResult`: `None` is `ok=False`, `-1` is `ok=True`, and a
+position is `complete=True` once nothing but whitespace follows and
+`json.loads` accepts the text.
+
 ### Prompt example
 
 `build_prompt` turns the function definitions and one user request into a
@@ -234,6 +258,36 @@ once per generation step (numbers from the Qwen3-0.6B `config.json`):
 
 The decoder then sorts the ids by score, looks up each candidate's bytes in
 `_id_to_bytes` and keeps the first one the checker accepts.
+
+### The whole flow, step by step
+
+1. **Load once.** `load_decoder(functions)` loads the model and its tokenizer
+   (two separate objects from the same Hugging Face folder) and builds the
+   `ConstrainedDecoder` shown above, with `_checker` and `_id_to_bytes`.
+2. **Loop over prompts.** Each user request is handled on its own. For every
+   request, `build_prompt` writes one prompt: the rules, all available
+   functions and this single request.
+3. **Text to ids.** `llm.encode(full_prompt)` runs the tokenizer (regex split,
+   BPE merges from `merges.txt`, lookup in `vocab.json`), which is ordinary code
+   next to the model, not part of the neural network. The prompt becomes a list
+   of about 393 ids, e.g. `" sum"` -> `2629`.
+4. **One generation step.** `get_logits_from_input_ids(prompt_ids +
+   generated_ids)` turns each id into its embedding vector, runs the vectors
+   through the 28 transformer layers and returns one score for each of the
+   151,936 tokens. The scores rank every token as the next one given the whole
+   context; the highest score is the model's favourite, not a guaranteed match.
+5. **Pick a legal token.** `_select_token` walks the ids from highest score
+   down and takes the first one whose bytes keep the output a valid prefix of a
+   function call (checked by `_checker`).
+6. **Append and repeat.** The chosen id goes to `generated_ids` (fed back to the
+   model at step 4) and its bytes to `generated` (read by the checker). Steps
+   4-6 repeat, one token at a time, at most 256 times.
+7. **Finish.** When the checker reports the JSON object complete, it is parsed
+   into a `FunctionCallResult`. After the last prompt, all results are written
+   to the output file.
+
+On the first step of "What is the sum of 2 and 3?", for example, the top score
+(21.23) belongs to `' {"'`, which the checker accepts, so the call starts there.
 
 ## Design decisions
 

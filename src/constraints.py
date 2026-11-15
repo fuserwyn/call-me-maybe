@@ -305,16 +305,25 @@ class FunctionCallPrefixChecker(BaseModel):
             ParseResult with ok/complete flags and parsed object if done.
         """
         end = self._match_call(text)
+        # Invalid, can never become a call: '{"nme"', '{"name":"unknown"',
+        # '..."a":"2"' (string for a number) -> reject this token.
         if end is None:
             return ParseResult(ok=False)
+        # Valid so far but unfinished: '{"na', '..."a":2.', '...{"a":2.0}'
+        # (last } missing) -> accept, keep generating.
         if end == _PARTIAL:
             return ParseResult(ok=True)
+        # Both } are closed, but something other than whitespace follows:
+        # '...}}x', '...}},' -> reject. '...}} ' or '...}}\n' is fine.
         if skip_ws(text, end) < len(text):
             return ParseResult(ok=False)
+        # Closed call, nothing after it: parse it into a dict. A ValueError
+        # here would mean a gap in the grammar above (safety net).
         try:
             parsed = json.loads(text)
         except ValueError:
             return ParseResult(ok=False)
+        # Complete call: generate() stops and returns it.
         return ParseResult(ok=True, complete=True, parsed=parsed)
 
     def _match_call(self, text: str) -> int | None:
